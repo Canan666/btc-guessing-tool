@@ -26,7 +26,11 @@ const riskAssessment = (price: number) => {
   if (price >= 94800) {
     return { prediction: "跌", reason: "价格接近阻力位，易回落", risk: "中等" };
   }
-  return { prediction: "震荡/观望", reason: "当前价格处于中性区间，方向不明朗", risk: "高" };
+  return {
+    prediction: "震荡/观望",
+    reason: "当前价格处于中性区间，方向不明朗",
+    risk: "高",
+  };
 };
 
 interface Prediction {
@@ -52,20 +56,27 @@ export default function BTCGuessingTool() {
     const fetchPrice = async () => {
       try {
         const res = await fetch("/api/btc-price");
+        const json = (await res.json()) as {
+          rate?: number;
+          error?: string;
+        };
+
         if (!res.ok) {
-          console.error("接口返回错误 status:", res.status);
+          console.error("[fetchPrice] HTTP", res.status, json.error);
           return;
         }
-        const json = (await res.json()) as { rate?: number; error?: string };
+        if (json.error) {
+          console.error("[fetchPrice] API error:", json.error);
+          return;
+        }
         if (typeof json.rate === "number") {
           setPrice(json.rate);
-        } else {
-          console.error("API 未返回 rate 字段:", json);
         }
-      } catch (error) {
-        console.error("获取价格失败：", error);
+      } catch (e) {
+        console.error("[fetchPrice] Exception:", e);
       }
     };
+
     fetchPrice();
     const interval = setInterval(fetchPrice, 1000);
     return () => clearInterval(interval);
@@ -80,17 +91,31 @@ export default function BTCGuessingTool() {
           if (h.actualPrice == null && now >= h.endTime) {
             try {
               const res = await fetch("/api/btc-price");
-              if (!res.ok) return h;
-              const data = (await res.json()) as { rate?: number };
-              const actual = data.rate!;
+              const json = (await res.json()) as {
+                rate?: number;
+                error?: string;
+              };
+
+              if (!res.ok || json.error || typeof json.rate !== "number") {
+                console.error(
+                  "[validatePrediction] fetch error:",
+                  res.status,
+                  json.error
+                );
+                return h;
+              }
+
+              const actual = json.rate;
               let result: "正确" | "错误" | "未知" = "未知";
               if (h.prediction === "涨") {
                 result = actual > h.predictedPrice ? "正确" : "错误";
               } else if (h.prediction === "跌") {
                 result = actual < h.predictedPrice ? "正确" : "错误";
               }
+
               return { ...h, actualPrice: actual, result };
-            } catch {
+            } catch (e) {
+              console.error("[validatePrediction] Exception:", e);
               return h;
             }
           }
@@ -99,6 +124,7 @@ export default function BTCGuessingTool() {
       );
       setHistory(updated);
     }, 1000);
+
     return () => clearInterval(interval);
   }, [history]);
 
@@ -106,7 +132,7 @@ export default function BTCGuessingTool() {
     if (price == null) return;
     const analysis = riskAssessment(price);
     const now = Date.now();
-    const duration = timeframeToMs[timeframe] || 0;
+    const duration = timeframeToMs[timeframe] ?? 0;
     const newPrediction: Prediction = {
       time: new Date(now).toLocaleString(),
       price,
@@ -124,9 +150,11 @@ export default function BTCGuessingTool() {
     <div className="max-w-5xl mx-auto p-6 space-y-6 bg-gray-50 min-h-screen">
       <Card className="shadow-xl border border-gray-200">
         <CardContent className="space-y-4 p-6">
-          <h2 className="text-2xl font-bold text-gray-800">BTC 模拟竞猜工具</h2>
+          <h2 className="text-2xl font-bold text-gray-800">
+            BTC 模拟竞猜工具
+          </h2>
           <div className="text-base text-gray-600">
-            当前价格：
+            当前价格：{" "}
             <span className="text-green-600 font-semibold">
               {price !== null ? `$${price.toFixed(2)} USD` : "加载中..."}
             </span>
@@ -157,7 +185,9 @@ export default function BTCGuessingTool() {
       {history.length > 0 && (
         <Card className="shadow-md border border-gray-200">
           <CardContent className="space-y-3 p-6">
-            <h3 className="text-lg font-semibold text-gray-800">竞猜历史记录</h3>
+            <h3 className="text-lg font-semibold text-gray-800">
+              竞猜历史记录
+            </h3>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -188,11 +218,15 @@ export default function BTCGuessingTool() {
                         <TableCell>{h.timeframe}</TableCell>
                         <TableCell>{h.prediction}</TableCell>
                         <TableCell>
-                          {price !== null ? `$${price.toFixed(2)}` : "加载中..."}
+                          {price !== null
+                            ? `$${price.toFixed(2)}`
+                            : "加载中..."}
                         </TableCell>
                         <TableCell>{remaining}</TableCell>
                         <TableCell>
-                          {h.actualPrice != null ? `$${h.actualPrice}` : "等待中..."}
+                          {h.actualPrice != null
+                            ? `$${h.actualPrice}`
+                            : "等待中..."}
                         </TableCell>
                         <TableCell>
                           {h.result ? (
