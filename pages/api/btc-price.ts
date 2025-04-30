@@ -1,22 +1,23 @@
 // pages/api/btc-price.ts
+
 import type { NextApiRequest, NextApiResponse } from 'next';
+
+type Data = { rate: number } | { error: string };
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<{ rate: number } | { error: string }>
+  res: NextApiResponse<Data>
 ) {
   try {
-    // 调用币安现货行情接口
     const binanceRes = await fetch(
       'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'
     );
     if (!binanceRes.ok) {
-      throw new Error(`Binance API 返回 ${binanceRes.status}`);
+      throw new Error(`Binance API 返回状态 ${binanceRes.status}`);
     }
-    const data = await binanceRes.json() as { symbol: string; price: string };
-
-    // 把字符串 price 转成数值
+    const data = (await binanceRes.json()) as { symbol: string; price: string };
     const rate = parseFloat(data.price);
+    // 在 Vercel 上缓存 5 秒，过期后 stale-while-revalidate
     res.setHeader('Cache-Control', 's-maxage=5, stale-while-revalidate');
     return res.status(200).json({ rate });
   } catch (err) {
