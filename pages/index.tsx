@@ -37,21 +37,19 @@ export default function BTCGuessingTool() {
 
   // 定时获取 BTC 实时价格
   useEffect(() => {
-  const fetchPrice = async () => {
-    try {
-      const res = await fetch('/api/btc-price');
-      const data = await res.json();
-      setPrice(data.rate);
-    } catch (error) {
-      console.error('获取价格失败', error);
-    }
-  };
-  fetchPrice();
-  const interval = setInterval(fetchPrice, 1000);
-  return () => clearInterval(interval);
-}, []);
-
-
+    const fetchPrice = async () => {
+      try {
+        const res = await fetch("/api/btc-price");
+        const data = await res.json();
+        setPrice(data.rate);
+      } catch (error) {
+        console.error("获取价格失败", error);
+      }
+    };
+    fetchPrice();
+    const interval = setInterval(fetchPrice, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 每秒检查是否有到期预测需要验证
   useEffect(() => {
