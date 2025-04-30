@@ -74,36 +74,49 @@ export default function BTCGuessingTool() {
 
   // 点击分析 —— 串调用深度分析接口
   const handleAnalyze = async () => {
-    if (price == null) return;
-    try {
-      const res = await fetch("/api/btc-depth");
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        console.error("深度分析失败", json.error);
-        return;
-      }
-      const { recommendation, riskIndex, analysisDetail } = json as {
-        recommendation: string;
-        riskIndex: string;
-        analysisDetail: string;
-      };
-      const now = Date.now();
-      const duration = timeframeToMs[timeframe] ?? 0;
-      const newPred: Prediction = {
-        time: new Date(now).toLocaleString(),
-        price,
-        timeframe,
-        recommendation,
-        riskIndex,
-        analysisDetail,
-        predictedPrice: price,
-        endTime: now + duration,
-      };
-      setHistory((prev) => [...prev, newPred]);
-    } catch (e) {
-      console.error("分析接口异常", e);
+  console.log("🚀 handleAnalyze called, price =", price);
+  if (price == null) {
+    console.warn("⚠️ 当前 price 为空，无法分析");
+    return;
+  }
+
+  try {
+    console.log("🌐 Fetching /api/btc-depth …");
+    const res = await fetch("/api/btc-depth");
+    console.log("⬇️ /api/btc-depth status:", res.status);
+    const json = await res.json();
+    console.log("📊 /api/btc-depth response:", json);
+
+    if (!res.ok || (json as any).error) {
+      console.error("❌ 深度分析失败：", (json as any).error);
+      return;
     }
-  };
+
+    const { recommendation, riskIndex, analysisDetail } = json as {
+      recommendation: string;
+      riskIndex: string;
+      analysisDetail: string;
+    };
+
+    const now = Date.now();
+    const duration = timeframeToMs[timeframe] ?? 0;
+    const newPred: Prediction = {
+      time: new Date(now).toLocaleString(),
+      price,
+      timeframe,
+      recommendation,
+      riskIndex,
+      analysisDetail,
+      predictedPrice: price,
+      endTime: now + duration,
+    };
+    console.log("✅ 推入历史记录：", newPred);
+    setHistory((prev) => [...prev, newPred]);
+  } catch (e) {
+    console.error("🔥 handleAnalyze exception:", e);
+  }
+};
+
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6 bg-gray-50 min-h-screen">
