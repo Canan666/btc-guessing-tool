@@ -20,10 +20,12 @@ const timeframeToMs: Record<string, number> = {
 };
 
 const riskAssessment = (price: number) => {
-  if (price <= 94200)
+  if (price <= 94200) {
     return { prediction: "涨", reason: "价格接近日内支撑位，易反弹", risk: "低" };
-  if (price >= 94800)
+  }
+  if (price >= 94800) {
     return { prediction: "跌", reason: "价格接近阻力位，易回落", risk: "中等" };
+  }
   return { prediction: "震荡/观望", reason: "当前价格处于中性区间，方向不明朗", risk: "高" };
 };
 
@@ -82,8 +84,11 @@ export default function BTCGuessingTool() {
               const data = (await res.json()) as { rate?: number };
               const actual = data.rate!;
               let result: "正确" | "错误" | "未知" = "未知";
-              if (h.prediction === "涨") result = actual > h.predictedPrice ? "正确" : "错误";
-              else if (h.prediction === "跌") result = actual < h.predictedPrice ? "正确" : "错误";
+              if (h.prediction === "涨") {
+                result = actual > h.predictedPrice ? "正确" : "错误";
+              } else if (h.prediction === "跌") {
+                result = actual < h.predictedPrice ? "正确" : "错误";
+              }
               return { ...h, actualPrice: actual, result };
             } catch {
               return h;
@@ -169,4 +174,50 @@ export default function BTCGuessingTool() {
                 </TableHeader>
                 <TableBody>
                   {history.map((h, idx) => {
-                    const remaining = h
+                    const remaining =
+                      h.actualPrice != null
+                        ? "已结束"
+                        : `${Math.max(
+                            0,
+                            Math.floor((h.endTime - Date.now()) / 1000)
+                          )} 秒`;
+                    return (
+                      <TableRow key={idx}>
+                        <TableCell>{h.time}</TableCell>
+                        <TableCell>${h.predictedPrice}</TableCell>
+                        <TableCell>{h.timeframe}</TableCell>
+                        <TableCell>{h.prediction}</TableCell>
+                        <TableCell>
+                          {price !== null ? `$${price.toFixed(2)}` : "加载中..."}
+                        </TableCell>
+                        <TableCell>{remaining}</TableCell>
+                        <TableCell>
+                          {h.actualPrice != null ? `$${h.actualPrice}` : "等待中..."}
+                        </TableCell>
+                        <TableCell>
+                          {h.result ? (
+                            <span
+                              className={
+                                h.result === "正确"
+                                  ? "text-green-600"
+                                  : "text-red-600"
+                              }
+                            >
+                              {h.result}
+                            </span>
+                          ) : (
+                            "等待中..."
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
