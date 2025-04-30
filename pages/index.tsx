@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,6 +39,7 @@ interface Prediction {
   prediction: string;
   reason: string;
   risk: string;
+  analysisDetail: string;
   predictedPrice: number;
   endTime: number;
   actualPrice?: number;
@@ -49,84 +51,46 @@ export default function BTCGuessingTool() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState("10分钟");
   const [history, setHistory] = useState<Prediction[]>([]);
+  const [analysisDetail, setAnalysisDetail] = useState<string | null>(null);
 
-  // 一：初始 fetch 回退，保证页面打开就能看到一次价格
+  // 初始 fetch 回退
   useEffect(() => {
-    const fetchInitial = async () => {
-      console.log("[initFetch] fetching initial price...");
+    (async () => {
       try {
         const res = await fetch("/api/btc-price");
         const json = (await res.json()) as { rate?: number; error?: string };
         if (res.ok && typeof json.rate === "number") {
-          console.log("[initFetch] got initial price", json.rate);
           setPrice(json.rate);
-        } else {
-          console.error("[initFetch] failed:", res.status, json.error);
         }
-      } catch (e) {
-        console.error("[initFetch] exception:", e);
-      }
-    };
-    fetchInitial();
+      } catch {}
+    })();
   }, []);
 
-  // 二：WebSocket 实时推送
+  // WebSocket 实时推送
   useEffect(() => {
-    console.log("[WS] connecting to Binance ticker WS...");
-    const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@ticker");
-
-    ws.onopen = () => {
-      console.log("[WS] connection opened");
-      setErrorMsg(null);
-    };
-
+    const ws = new WebSocket(
+      "wss://stream.binance.com:9443/ws/btcusdt@ticker"
+    );
     ws.onmessage = (event) => {
-      // 每条消息都是 JSON 字符串
       try {
         const msg = JSON.parse(event.data);
-        console.log("[WS] message", msg);
         const last = parseFloat(msg.c);
         if (!isNaN(last)) {
           setPrice(last);
         }
-      } catch (e) {
-        console.error("[WS] parse error:", e);
-      }
+      } catch {}
     };
+    ws.onerror = () => setErrorMsg("WebSocket 连接出错");
+    return () => ws.close();
+  }, []);
 
-    ws.onerror = (e) => {
-      console.error("[WS] error", e);
-      setErrorMsg("WebSocket 连接出错，请检查网络");
-    };
-
-    ws.onclose = (ev) => {
-      console.warn("[WS] closed", ev.code, ev.reason);
-      // 如果非正常关闭，可尝试重连
-      if (ev.code !== 1000) {
-        setErrorMsg("WebSocket 异常关闭，将在 3 秒后重连");
-        setTimeout(() => {
-          setErrorMsg(null);
-          // 重连
-          console.log("[WS] reconnecting...");
-          // 重新执行 effect
-          setPrice((p) => p); // 触发依赖变化
-        }, 3000);
-      }
-    };
-
-    return () => {
-      console.log("[WS] cleanup, closing socket");
-      ws.close(1000, "Client cleanup");
-    };
-  }, [/* 依赖为空，首次挂载后不会重复，重连逻辑写在 onclose 里 */]);
-
-  // 三：验证到期预测（用最新 price）
+  // 验证到期预测
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now();
       setHistory((prev) =>
         prev.map((h) => {
-          if (h.actualPrice == null && now >= h.endTime && price != null) {
+          if (!h.actualPrice && now >= h.endTime && price != null) {
             let result: "正确" | "错误" | "未知" = "未知";
             if (h.prediction === "涨") {
               result = price > h.predictedPrice ? "正确" : "错误";
@@ -142,36 +106,83 @@ export default function BTCGuessingTool() {
     return () => clearInterval(iv);
   }, [price]);
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     if (price == null) return;
-    const analysis = riskAssessment(price);
+
+    // 基础技术指标：20期SMA和波动率
+    let analysisText = "";
+    try {
+      const res = await fetch(
+        "/api/btc-depth?symbol=BTCUSDT&interval=1h&limit=20"
+      );
+      if (res.ok) {
+        const klines = (await res.json()) as any[];
+        const closes = klines.map((k) => parseFloat(k[4]));
+        const sma = closes.reduce((a, b) => a + b, 0) / closes.length;
+        const variance =
+          closes.reduce((a, b) => a + Math.pow(b - sma, 2), 0) /
+          closes.length;
+        const std = Math.sqrt(variance);
+        const volatility = std / sma;
+        const recommendation = price > sma ? "涨" : "跌";
+        const riskLevel =
+          volatility < 0.005
+            ? "低"
+            : volatility < 0.01
+            ? "中等"
+            : "高";
+        analysisText =
+          `SMA(20h): ${sma.toFixed(2)}, 当前价格$${price.toFixed(
+            2
+          )}${
+            price > sma ? "高于" : "低于"
+          }平均线；波动率: ${(volatility * 100).toFixed(2)}%，风险等级: ${
+            riskLevel
+          }，建议${recommendation}`;
+      }
+    } catch {}
+
+    const basic = riskAssessment(price);
     const now = Date.now();
-    const duration = timeframeToMs[timeframe] ?? 0;
+    const duration = timeframeToMs[timeframe] || 0;
     const newPrediction: Prediction = {
       time: new Date(now).toLocaleString(),
       price,
       timeframe,
-      prediction: analysis.prediction,
-      reason: analysis.reason,
-      risk: analysis.risk,
+      prediction: basic.prediction,
+      reason: basic.reason,
+      risk: basic.risk,
+      analysisDetail: analysisText || `${basic.reason}，风险: ${basic.risk}`,
       predictedPrice: price,
       endTime: now + duration,
     };
     setHistory((prev) => [...prev, newPrediction]);
+    setAnalysisDetail(newPrediction.analysisDetail);
   };
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6 bg-gray-50 min-h-screen">
       <Card className="shadow-xl border border-gray-200">
         <CardContent className="space-y-4 p-6">
-          <h2 className="text-2xl font-bold text-gray-800">BTC 模拟竞猜工具</h2>
+          <h2 className="text-2xl font-bold text-gray-800">
+            BTC 模拟竞猜工具
+          </h2>
           <div className="text-base text-gray-600">
-            当前价格：{" "}
+            当前价格：{' '}
             <span className="text-green-600 font-semibold">
-              {price !== null ? `$${price.toFixed(2)} USD` : "加载中..."}
+              {price !== null ? `$${price.toFixed(2)} USD` : '加载中...'}
             </span>
           </div>
           {errorMsg && <div className="text-red-500 text-sm">{errorMsg}</div>}
+
+          {analysisDetail && (
+            <div className="p-4 bg-white rounded-lg border border-gray-200">
+              <h3 className="text-lg font-medium">深度分析</h3>
+              <p className="text-sm text-gray-700 mt-1">
+                {analysisDetail}
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -210,6 +221,7 @@ export default function BTCGuessingTool() {
                     <TableCell>周期</TableCell>
                     <TableCell>预测方向</TableCell>
                     <TableCell>当前价格</TableCell>
+                    <TableCell>深度分析</TableCell>
                     <TableCell>剩余时间</TableCell>
                     <TableCell>实际价格</TableCell>
                     <TableCell>预测结果</TableCell>
@@ -219,7 +231,7 @@ export default function BTCGuessingTool() {
                   {history.map((h, idx) => {
                     const remaining =
                       h.actualPrice != null
-                        ? "已结束"
+                        ? '已结束'
                         : `${Math.max(
                             0,
                             Math.floor((h.endTime - Date.now()) / 1000)
@@ -231,29 +243,30 @@ export default function BTCGuessingTool() {
                         <TableCell>{h.timeframe}</TableCell>
                         <TableCell>{h.prediction}</TableCell>
                         <TableCell>
-                          {price !== null
-                            ? `$${price.toFixed(2)}`
-                            : "加载中..."}
+                          {price !== null ? `$${price.toFixed(2)}` : '加载中...'}
+                        </TableCell>
+                        <TableCell title={h.analysisDetail}>
+                          {h.analysisDetail}
                         </TableCell>
                         <TableCell>{remaining}</TableCell>
                         <TableCell>
                           {h.actualPrice != null
                             ? `$${h.actualPrice}`
-                            : "等待中..."}
+                            : '等待中...'}
                         </TableCell>
                         <TableCell>
                           {h.result ? (
                             <span
                               className={
-                                h.result === "正确"
-                                  ? "text-green-600"
-                                  : "text-red-600"
+                                h.result === '正确'
+                                  ? 'text-green-600'
+                                  : 'text-red-600'
                               }
                             >
                               {h.result}
                             </span>
                           ) : (
-                            "等待中..."
+                            '等待中...'
                           )}
                         </TableCell>
                       </TableRow>
