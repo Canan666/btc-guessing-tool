@@ -48,75 +48,49 @@ interface Prediction {
 
 export default function BTCGuessingTool() {
   const [price, setPrice] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState("10分钟");
   const [history, setHistory] = useState<Prediction[]>([]);
 
-  // 定时获取 BTC 实时价格（每秒一次）
+  // 利用 WebSocket 实时推送最新价格
   useEffect(() => {
-    const fetchPrice = async () => {
+    const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@ticker");
+    ws.onopen = () => console.log("Binance WS 已连接");
+    ws.onmessage = (event) => {
       try {
-        const res = await fetch("/api/btc-price");
-        const json = (await res.json()) as {
-          rate?: number;
-          error?: string;
-        };
-
-        if (!res.ok) {
-          console.error("[fetchPrice] HTTP", res.status, json.error);
-          return;
-        }
-        if (json.error) {
-          console.error("[fetchPrice] API error:", json.error);
-          return;
-        }
-        if (typeof json.rate === "number") {
-          setPrice(json.rate);
+        const msg = JSON.parse(event.data);
+        const last = parseFloat(msg.c);
+        if (!isNaN(last)) {
+          setPrice(last);
         }
       } catch (e) {
-        console.error("[fetchPrice] Exception:", e);
+        console.error("WS 数据解析错误", e);
       }
     };
-
-    fetchPrice();
-    const interval = setInterval(fetchPrice, 1000);
-    return () => clearInterval(interval);
+    ws.onerror = (e) => {
+      console.error("WebSocket 错误", e);
+      setErrorMsg("价格推送失败，请检查网络");
+    };
+    ws.onclose = () => console.log("Binance WS 已关闭");
+    return () => ws.close();
   }, []);
 
-  // 定时检查并验证到期的预测
+  // 验证到期预测
   useEffect(() => {
     const interval = setInterval(async () => {
       const now = Date.now();
       const updated = await Promise.all(
         history.map(async (h) => {
           if (h.actualPrice == null && now >= h.endTime) {
-            try {
-              const res = await fetch("/api/btc-price");
-              const json = (await res.json()) as {
-                rate?: number;
-                error?: string;
-              };
-
-              if (!res.ok || json.error || typeof json.rate !== "number") {
-                console.error(
-                  "[validatePrediction] fetch error:",
-                  res.status,
-                  json.error
-                );
-                return h;
-              }
-
-              const actual = json.rate;
+            // 到期时直接用前端缓存的 price
+            if (price != null) {
               let result: "正确" | "错误" | "未知" = "未知";
               if (h.prediction === "涨") {
-                result = actual > h.predictedPrice ? "正确" : "错误";
+                result = price > h.predictedPrice ? "正确" : "错误";
               } else if (h.prediction === "跌") {
-                result = actual < h.predictedPrice ? "正确" : "错误";
+                result = price < h.predictedPrice ? "正确" : "错误";
               }
-
-              return { ...h, actualPrice: actual, result };
-            } catch (e) {
-              console.error("[validatePrediction] Exception:", e);
-              return h;
+              return { ...h, actualPrice: price, result };
             }
           }
           return h;
@@ -124,9 +98,8 @@ export default function BTCGuessingTool() {
       );
       setHistory(updated);
     }, 1000);
-
     return () => clearInterval(interval);
-  }, [history]);
+  }, [history, price]);
 
   const handleAnalyze = () => {
     if (price == null) return;
@@ -150,15 +123,16 @@ export default function BTCGuessingTool() {
     <div className="max-w-5xl mx-auto p-6 space-y-6 bg-gray-50 min-h-screen">
       <Card className="shadow-xl border border-gray-200">
         <CardContent className="space-y-4 p-6">
-          <h2 className="text-2xl font-bold text-gray-800">
-            BTC 模拟竞猜工具
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-800">BTC 模拟竞猜工具</h2>
           <div className="text-base text-gray-600">
             当前价格：{" "}
             <span className="text-green-600 font-semibold">
               {price !== null ? `$${price.toFixed(2)} USD` : "加载中..."}
             </span>
           </div>
+          {errorMsg && (
+            <div className="text-red-500 text-sm">{errorMsg}</div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
