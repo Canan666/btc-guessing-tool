@@ -18,17 +18,16 @@ export default async function handler(
   const interval = '1h';
   const limit = 20;
 
-  // 1. 先尝试 Binance 的多个域名
-  const domains = [
+  let raw: any[] | null = null;
+  let lastErrMsg: string | null = null;
+
+  // 1. Binance 多域名轮询
+  for (const domain of [
     'api.binance.com',
     'api1.binance.com',
     'api2.binance.com',
     'api3.binance.com',
-  ];
-  let raw: any[] | null = null;
-  let lastErrMsg: string | null = null;
-
-  for (const domain of domains) {
+  ]) {
     const url = `https://${domain}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
     try {
       const resp = await fetch(url);
@@ -43,9 +42,8 @@ export default async function handler(
     }
   }
 
-  // 2. 如果 Binance 全部失败，退到 CoinGecko
+  // 2. Binance 全部失败，再尝试 CoinGecko
   if (!raw) {
-    console.warn(`[btc-depth] Binance 全域名失败，原因：${lastErrMsg}，正在切换到 CoinGecko`);
     try {
       const cgUrl =
         'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1&interval=hourly';
@@ -55,21 +53,52 @@ export default async function handler(
       }
       const cgData = await cgResp.json();
       const prices: [number, number][] = cgData.prices;
-      if (!Array.isArray(prices) || prices.length === 0) {
-        throw new Error('CoinGecko 数据格式异常');
+      if (!Array.isArray(prices) || prices.length < limit) {
+        throw new Error('CoinGecko 数据不足');
       }
-      // 取最后 20 个点
-      const recent = prices.slice(-limit);
-      raw = recent.map(([time, price]) => [time, price, price, price, price]);
+      // 取最后 20 条收盘价
+      raw = prices.slice(-limit).map(([time, price]) => [
+        time,
+        price,
+        price,
+        price,
+        price,
+      ]);
     } catch (e: any) {
-      console.error('[btc-depth] CoinGecko 也失败：', e);
-      return res
-        .status(502)
-        .json({ error: `深度分析失败：${lastErrMsg}；CoinGecko 错误：${e.message}` });
+      lastErrMsg = `CoinGecko 错误：${e.message}`;
     }
   }
 
-  // 3. 计算 20h SMA & 波动率
+  // 3. CoinGecko 也失败，再尝试 CoinCap
+  if (!raw) {
+    try {
+      const ccUrl = `https://api.coincap.io/v2/assets/bitcoin/history?interval=h1&limit=${limit}`;
+      const ccResp = await fetch(ccUrl);
+      if (!ccResp.ok) {
+        throw new Error(`CoinCap 返回 ${ccResp.status}`);
+      }
+      const ccData = await ccResp.json();
+      const items: { priceUsd: string }[] = ccData.data;
+      if (!Array.isArray(items) || items.length < limit) {
+        throw new Error('CoinCap 数据不足');
+      }
+      // 收盘价取 priceUsd
+      raw = items.map((it) => {
+        const p = parseFloat(it.priceUsd);
+        return [0, 0, 0, 0, p];
+      });
+    } catch (e: any) {
+      lastErrMsg = `CoinCap 错误：${e.message}`;
+    }
+  }
+
+  // 4. 如果仍然没有数据，才报错
+  if (!raw) {
+    console.error('[btc-depth] 全部来源失败：', lastErrMsg);
+    return res.status(502).json({ error: `深度分析失败：${lastErrMsg}` });
+  }
+
+  // 5. 计算 20h SMA & 波动率
   const closes = raw.map((k) => parseFloat(k[4]));
   const avg = closes.reduce((a, b) => a + b, 0) / closes.length;
   const variance =
@@ -79,7 +108,7 @@ export default async function handler(
   const volRatio = stddev / avg;
   const lastPrice = closes[closes.length - 1];
 
-  // 4. 生成推荐和风险评级
+  // 6. 生成推荐和风险评级
   const recommendation: '看涨' | '看跌' = lastPrice > avg ? '看涨' : '看跌';
   let riskIndex: '低' | '中等' | '高' = '中等';
   if (volRatio < 0.005) riskIndex = '低';
@@ -91,7 +120,7 @@ export default async function handler(
     2
   )}% → 推荐${recommendation}，风险${riskIndex}`;
 
-  // 5. 缓存 60s
+  // 7. 缓存 60s
   res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
   return res.status(200).json({ recommendation, riskIndex, analysisDetail });
 }
