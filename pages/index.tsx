@@ -1,5 +1,3 @@
-// pages/index.tsx
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,54 +50,97 @@ export default function BTCGuessingTool() {
   const [timeframe, setTimeframe] = useState("10分钟");
   const [history, setHistory] = useState<Prediction[]>([]);
 
-  // 利用 WebSocket 实时推送最新价格
+  // 一：初始 fetch 回退，保证页面打开就能看到一次价格
   useEffect(() => {
+    const fetchInitial = async () => {
+      console.log("[initFetch] fetching initial price...");
+      try {
+        const res = await fetch("/api/btc-price");
+        const json = (await res.json()) as { rate?: number; error?: string };
+        if (res.ok && typeof json.rate === "number") {
+          console.log("[initFetch] got initial price", json.rate);
+          setPrice(json.rate);
+        } else {
+          console.error("[initFetch] failed:", res.status, json.error);
+        }
+      } catch (e) {
+        console.error("[initFetch] exception:", e);
+      }
+    };
+    fetchInitial();
+  }, []);
+
+  // 二：WebSocket 实时推送
+  useEffect(() => {
+    console.log("[WS] connecting to Binance ticker WS...");
     const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@ticker");
-    ws.onopen = () => console.log("Binance WS 已连接");
+
+    ws.onopen = () => {
+      console.log("[WS] connection opened");
+      setErrorMsg(null);
+    };
+
     ws.onmessage = (event) => {
+      // 每条消息都是 JSON 字符串
       try {
         const msg = JSON.parse(event.data);
+        console.log("[WS] message", msg);
         const last = parseFloat(msg.c);
         if (!isNaN(last)) {
           setPrice(last);
         }
       } catch (e) {
-        console.error("WS 数据解析错误", e);
+        console.error("[WS] parse error:", e);
       }
     };
-    ws.onerror = (e) => {
-      console.error("WebSocket 错误", e);
-      setErrorMsg("价格推送失败，请检查网络");
-    };
-    ws.onclose = () => console.log("Binance WS 已关闭");
-    return () => ws.close();
-  }, []);
 
-  // 验证到期预测
+    ws.onerror = (e) => {
+      console.error("[WS] error", e);
+      setErrorMsg("WebSocket 连接出错，请检查网络");
+    };
+
+    ws.onclose = (ev) => {
+      console.warn("[WS] closed", ev.code, ev.reason);
+      // 如果非正常关闭，可尝试重连
+      if (ev.code !== 1000) {
+        setErrorMsg("WebSocket 异常关闭，将在 3 秒后重连");
+        setTimeout(() => {
+          setErrorMsg(null);
+          // 重连
+          console.log("[WS] reconnecting...");
+          // 重新执行 effect
+          setPrice((p) => p); // 触发依赖变化
+        }, 3000);
+      }
+    };
+
+    return () => {
+      console.log("[WS] cleanup, closing socket");
+      ws.close(1000, "Client cleanup");
+    };
+  }, [/* 依赖为空，首次挂载后不会重复，重连逻辑写在 onclose 里 */]);
+
+  // 三：验证到期预测（用最新 price）
   useEffect(() => {
-    const interval = setInterval(async () => {
+    const iv = setInterval(() => {
       const now = Date.now();
-      const updated = await Promise.all(
-        history.map(async (h) => {
-          if (h.actualPrice == null && now >= h.endTime) {
-            // 到期时直接用前端缓存的 price
-            if (price != null) {
-              let result: "正确" | "错误" | "未知" = "未知";
-              if (h.prediction === "涨") {
-                result = price > h.predictedPrice ? "正确" : "错误";
-              } else if (h.prediction === "跌") {
-                result = price < h.predictedPrice ? "正确" : "错误";
-              }
-              return { ...h, actualPrice: price, result };
+      setHistory((prev) =>
+        prev.map((h) => {
+          if (h.actualPrice == null && now >= h.endTime && price != null) {
+            let result: "正确" | "错误" | "未知" = "未知";
+            if (h.prediction === "涨") {
+              result = price > h.predictedPrice ? "正确" : "错误";
+            } else if (h.prediction === "跌") {
+              result = price < h.predictedPrice ? "正确" : "错误";
             }
+            return { ...h, actualPrice: price, result };
           }
           return h;
         })
       );
-      setHistory(updated);
     }, 1000);
-    return () => clearInterval(interval);
-  }, [history, price]);
+    return () => clearInterval(iv);
+  }, [price]);
 
   const handleAnalyze = () => {
     if (price == null) return;
@@ -130,9 +171,7 @@ export default function BTCGuessingTool() {
               {price !== null ? `$${price.toFixed(2)} USD` : "加载中..."}
             </span>
           </div>
-          {errorMsg && (
-            <div className="text-red-500 text-sm">{errorMsg}</div>
-          )}
+          {errorMsg && <div className="text-red-500 text-sm">{errorMsg}</div>}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
