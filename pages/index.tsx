@@ -37,14 +37,20 @@ export default function BTCGuessingTool() {
 
   // 定时获取 BTC 实时价格
   useEffect(() => {
-  const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@ticker');
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    // msg.c 是最新成交价字符串
-    setPrice(parseFloat(msg.c));
+  const fetchPrice = async () => {
+    try {
+      const res = await fetch('/api/btc-price');
+      const data = await res.json();
+      setPrice(data.rate);
+    } catch (error) {
+      console.error('获取价格失败', error);
+    }
   };
-  return () => ws.close();
+  fetchPrice();
+  const interval = setInterval(fetchPrice, 1000);
+  return () => clearInterval(interval);
 }, []);
+
 
 
   // 每秒检查是否有到期预测需要验证
