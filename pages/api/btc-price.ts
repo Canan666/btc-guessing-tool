@@ -1,5 +1,3 @@
-// pages/api/btc-price.ts
-
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 type Success = { rate: number };
@@ -10,7 +8,7 @@ export default async function handler(
   res: NextApiResponse<Success | Failure>
 ) {
   try {
-    // 1. 调用币安 REST 接口
+    // 1. 调用币安现货 REST 接口
     const binanceRes = await fetch(
       'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'
     );
